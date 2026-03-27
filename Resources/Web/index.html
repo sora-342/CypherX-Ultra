@@ -910,12 +910,19 @@
       <!-- Register Form -->
       <div id="registerForm" class="content hidden">
         <div id="registerAlert" class="alert hidden"></div>
+        <div id="pairCodeBox" class="alert hidden"></div>
 
         <form onsubmit="event.preventDefault(); registerSession()">
           <div class="form-group">
             <label class="form-label">Session ID</label>
-            <input type="text" id="sessionId" class="form-input" placeholder="Enter your session id" required>
-            <p class="form-hint">The session id for pairing</p>
+            <input type="text" id="sessionId" class="form-input" placeholder="Enter your session id">
+            <p class="form-hint">Use this if you already have a session ID</p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Phone Number (Optional)</label>
+            <input type="tel" id="pairPhone" class="form-input" placeholder="2547xxxxxxxx">
+            <p class="form-hint">Use this to generate a pairing code instead of a session ID</p>
           </div>
 
           <div class="form-group">
@@ -929,7 +936,7 @@
         </form>
 
         <div style="text-align: center; margin-top: 20px;">
-          <p class="form-hint">Session registered successfully! 🎉</p>
+          <p class="form-hint">Provide either Session ID or Phone Number — not both.</p>
         </div>
       </div>
     </div>

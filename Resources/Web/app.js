@@ -7,6 +7,10 @@ let gamePollingInterval = null;
 let gamePlayerSymbol = null;
 let gameCreatorPhone = null;
 let gameOpponentPhone = null;
+let pairingPollInterval = null;
+let pairingPollTimeout = null;
+let pairingStatusInterval = null;
+let pairingStatusTimeout = null;
 
 const elements = {
   authNav: document.getElementById('authNav'),
@@ -14,11 +18,13 @@ const elements = {
   registerForm: document.getElementById('registerForm'),
   loginAlert: document.getElementById('loginAlert'),
   registerAlert: document.getElementById('registerAlert'),
+  pairCodeBox: document.getElementById('pairCodeBox'),
   loginPhone: document.getElementById('loginPhone'),
   accessCode: document.getElementById('accessCode'),
   accessCodeGroup: document.getElementById('accessCodeGroup'),
   verifyCodeBtn: document.getElementById('verifyCodeBtn'),
   sessionId: document.getElementById('sessionId'),
+  pairPhone: document.getElementById('pairPhone'),
   masterPassword: document.getElementById('masterPassword'),
 
   settingsDashboard: document.getElementById('settingsDashboard'),
@@ -42,7 +48,7 @@ function showAlert(alertDiv, message, type) {
   alertDiv.textContent = message;
   alertDiv.classList.remove('hidden');
   alertDiv.style.animation = 'slideIn 0.3s ease-out';
-  
+
   if (type === 'success') {
     setTimeout(() => {
       alertDiv.style.animation = 'slideOut 0.3s ease-out';
@@ -157,10 +163,16 @@ async function verifyAccessCode() {
 
 async function registerSession() {
   const sessionId = elements.sessionId.value.trim();
+  const phone = elements.pairPhone.value.trim();
   const password = elements.masterPassword.value;
 
-  if (!sessionId) {
-    showAlert(elements.registerAlert, 'Please enter a session ID', 'error');
+  if (!sessionId && !phone) {
+    showAlert(elements.registerAlert, 'Please enter a session ID or phone number', 'error');
+    return;
+  }
+
+  if (sessionId && phone) {
+    showAlert(elements.registerAlert, 'Use either session ID or phone number, not both', 'error');
     return;
   }
 
@@ -169,39 +181,121 @@ async function registerSession() {
     return;
   }
 
-  showAlert(elements.registerAlert, 'Verifying password and pairing session...', 'info');
+  showAlert(elements.registerAlert, sessionId ? 'Verifying password and pairing session...' : 'Verifying password and generating pairing code...', 'info');
+  elements.pairCodeBox.classList.add('hidden');
+  elements.pairCodeBox.textContent = '';
 
   try {
     const registerRes = await fetch('/api/register-session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password })
+      body: JSON.stringify({ password, sessionId: sessionId || undefined, phone: phone || undefined })
     });
+
+    const data = await registerRes.json();
 
     if (!registerRes.ok) {
-      const data = await registerRes.json();
-      showAlert(elements.registerAlert, data.error || 'Invalid master password', 'error');
+      showAlert(elements.registerAlert, data.error || 'Registration failed', 'error');
       return;
     }
-    
-    const pairRes = await fetch('/api/pair', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId })
-    });
 
-    const pairData = await pairRes.json();
+    showAlert(elements.registerAlert, data.message || 'Session registered successfully!', 'success');
 
-    if (pairRes.ok) {
-      showAlert(elements.registerAlert, pairData.message || 'Session registered successfully!', 'success');
-      elements.sessionId.value = '';
-      elements.masterPassword.value = '';
-    } else {
-      showAlert(elements.registerAlert, pairData.message || 'Failed to pair session', 'error');
+    if (data.pairingCode) {
+      elements.pairCodeBox.className = 'alert alert-info';
+      elements.pairCodeBox.textContent = `Pairing Code: ${data.pairingCode}`;
+      elements.pairCodeBox.classList.remove('hidden');
+      startPairingCodePolling(phone, password);
+      startPairingStatusPolling(phone, password);
     }
+
+    elements.sessionId.value = '';
+    elements.pairPhone.value = '';
+    elements.masterPassword.value = '';
   } catch (error) {
     showAlert(elements.registerAlert, 'Error: ' + error.message, 'error');
   }
+}
+
+function startPairingCodePolling(phone, password) {
+  if (!phone || !password) return;
+
+  if (pairingPollInterval) clearInterval(pairingPollInterval);
+  if (pairingPollTimeout) clearTimeout(pairingPollTimeout);
+
+  const poll = async () => {
+    try {
+      const response = await fetch('/api/pairing-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, password })
+      });
+
+      if (response.status === 404) {
+        stopPairingCodePolling();
+        return;
+      }
+
+      const data = await response.json();
+      if (response.ok && data.code) {
+        const currentText = elements.pairCodeBox.textContent || '';
+        const nextText = `Pairing Code: ${data.code}`;
+        if (currentText !== nextText) {
+          elements.pairCodeBox.className = 'alert alert-info';
+          elements.pairCodeBox.textContent = nextText;
+          elements.pairCodeBox.classList.remove('hidden');
+        }
+      }
+    } catch {}
+  };
+
+  pairingPollInterval = setInterval(poll, 5000);
+  pairingPollTimeout = setTimeout(() => stopPairingCodePolling(), 2 * 60 * 1000);
+  poll();
+}
+
+function stopPairingCodePolling() {
+  if (pairingPollInterval) clearInterval(pairingPollInterval);
+  if (pairingPollTimeout) clearTimeout(pairingPollTimeout);
+  pairingPollInterval = null;
+  pairingPollTimeout = null;
+}
+
+function startPairingStatusPolling(phone, password) {
+  if (!phone || !password) return;
+
+  if (pairingStatusInterval) clearInterval(pairingStatusInterval);
+  if (pairingStatusTimeout) clearTimeout(pairingStatusTimeout);
+
+  const poll = async () => {
+    try {
+      const response = await fetch('/api/pairing-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, password })
+      });
+
+      const data = await response.json();
+      if (response.ok && data.paired) {
+        showAlert(elements.registerAlert, '✅ Pairing successful! You can now login.', 'success');
+        stopPairingStatusPolling();
+        stopPairingCodePolling();
+        elements.pairCodeBox.classList.add('hidden');
+        elements.pairCodeBox.textContent = '';
+      }
+    } catch {}
+  };
+
+  pairingStatusInterval = setInterval(poll, 3000);
+  pairingStatusTimeout = setTimeout(() => stopPairingStatusPolling(), 2 * 60 * 1000);
+  poll();
+}
+
+function stopPairingStatusPolling() {
+  if (pairingStatusInterval) clearInterval(pairingStatusInterval);
+  if (pairingStatusTimeout) clearTimeout(pairingStatusTimeout);
+  pairingStatusInterval = null;
+  pairingStatusTimeout = null;
 }
 
 function loginSuccess() {
@@ -309,7 +403,6 @@ async function updateSetting(key, element) {
 function switchTab(tabName) {
   elements.settingsTab.classList.add('hidden');
   elements.gamesTab.classList.add('hidden');
-
   document.querySelectorAll('.nav-tab').forEach(btn => {
     btn.classList.remove('active');
   });
@@ -341,7 +434,6 @@ async function createTictactoeGame() {
       gameCreatorPhone = currentSessionPhone;
       gamePlayerSymbol = 'X'; 
       gameOpponentPhone = null;
-
       showPendingGame(data.gameCode);
     } else {
       showNotification('Error: ' + data.error, 'error');
@@ -409,6 +501,7 @@ async function createCoinGame() {
 
 function showPendingGame(gameCode) {
   elements.pendingGameCode.textContent = gameCode;
+ 
   const header = document.getElementById('pendingHeader');
   if (header) {
     let icon = '🎮';
@@ -664,7 +757,6 @@ async function updateGameBoard() {
         boardDiv.appendChild(cell);
       }
     } else if (game.type === 'rps') {
-      // Rock Paper Scissors logic
       if (game.status === 'waiting') {
         playerInfo = `
           <div class="game-status waiting">
@@ -856,7 +948,6 @@ function backToGames() {
   gamePlayerSymbol = null;
   gameCreatorPhone = null;
   gameOpponentPhone = null;
-
   if (gamePollingInterval) {
     clearInterval(gamePollingInterval);
     gamePollingInterval = null;
@@ -885,6 +976,11 @@ function logout() {
   elements.loginPhone.value = '';
   elements.accessCode.value = '';
   elements.sessionId.value = '';
+  elements.pairPhone.value = '';
+  elements.pairCodeBox.classList.add('hidden');
+  elements.pairCodeBox.textContent = '';
+  stopPairingCodePolling();
+  stopPairingStatusPolling();
 }
 
 function showNotification(message, type = 'info') {
